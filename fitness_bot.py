@@ -8,8 +8,6 @@ import logging
 from datetime import datetime
 from telegram import (
     Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
@@ -103,37 +101,28 @@ DAY_NAMES = {
 DAY_SHORT = {0: "Вс", 1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб"}
 ACTIVE_DAYS = sorted(SCHEDULE_DATA.keys())  # [0,1,2,3,4,5,6]
 
-# ── Кнопки меню ──
-BTN_TODAY     = "📅 Сегодня"
-BTN_WEEK      = "🗓 Вся неделя"
-BTN_MON       = "Пн"
-BTN_TUE       = "Вт"
-BTN_WED       = "Ср"
-BTN_THU       = "Чт"
-BTN_FRI       = "Пт"
-BTN_SAT       = "Сб"
-BTN_MYCLASSES = "🏅 Мои занятия"
-BTN_EDIT      = "⚙️ Мои классы"
-
-BTN_TO_DAY = {
-    BTN_MON: 1,
-    BTN_TUE: 2,
-    BTN_WED: 3,
-    BTN_THU: 4,
-    BTN_FRI: 5,
-    BTN_SAT: 6,
-}
-
-MAIN_MENU = ReplyKeyboardMarkup(
-    [
-        [KeyboardButton(BTN_TODAY), KeyboardButton(BTN_WEEK)],
-        [KeyboardButton(BTN_MON), KeyboardButton(BTN_TUE), KeyboardButton(BTN_WED)],
-        [KeyboardButton(BTN_THU), KeyboardButton(BTN_FRI), KeyboardButton(BTN_SAT)],
-        [KeyboardButton(BTN_MYCLASSES), KeyboardButton(BTN_EDIT)],
-    ],
-    resize_keyboard=True,
-    input_field_placeholder="Выберите из меню ниже…",
-)
+# ── Inline-кнопки меню ──
+def _main_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📅 Сегодня", callback_data="nav:today"),
+            InlineKeyboardButton("🗓 Вся неделя", callback_data="nav:week"),
+        ],
+        [
+            InlineKeyboardButton("Пн", callback_data="nav:day:1"),
+            InlineKeyboardButton("Вт", callback_data="nav:day:2"),
+            InlineKeyboardButton("Ср", callback_data="nav:day:3"),
+        ],
+        [
+            InlineKeyboardButton("Чт", callback_data="nav:day:4"),
+            InlineKeyboardButton("Пт", callback_data="nav:day:5"),
+            InlineKeyboardButton("Сб", callback_data="nav:day:6"),
+        ],
+        [
+            InlineKeyboardButton("🏅 Мои занятия", callback_data="nav:myclasses"),
+            InlineKeyboardButton("⚙️ Мои классы", callback_data="nav:edit"),
+        ],
+    ])
 
 # ─────────────────────────────────────────────
 # Хранилище пользователей (in-memory)
@@ -223,6 +212,42 @@ def _today_day() -> int:
     return _PYTHON_TO_SCHEDULE.get(datetime.now().weekday(), 0)
 
 # ─────────────────────────────────────────────
+# Экраны бота
+# ─────────────────────────────────────────────
+
+def _home_text(name: str = "друг") -> str:
+    return (
+        f"👋 Привет, *{name}*!\n\n"
+        "🏋️ *Фитнес-Расписание*\n\n"
+        "Выберите действие кнопками ниже:"
+    )
+
+def _view_text(view: str, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    chosen = _get_user_classes(context, user_id)
+    filter_set = chosen if chosen else None
+
+    if view == "today":
+        return _day_text(_today_day(), filter_set)
+    if view == "week":
+        return _week_text(filter_set)
+    if view.startswith("day:"):
+        return _day_text(int(view.split(":", 1)[1]), filter_set)
+    if view == "myclasses":
+        return _my_classes_text(chosen)
+    return _home_text()
+
+async def _edit_screen(query, text: str, reply_markup: InlineKeyboardMarkup) -> None:
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+        )
+    except Exception as exc:
+        if "Message is not modified" not in str(exc):
+            raise
+
+# ─────────────────────────────────────────────
 # Inline-клавиатура выбора классов
 # ─────────────────────────────────────────────
 
@@ -239,6 +264,7 @@ def _class_picker_kb(selected: set) -> InlineKeyboardMarkup:
         InlineKeyboardButton("Выбрать все",  callback_data="selectall"),
     ])
     rows.append([InlineKeyboardButton("🗑 Сбросить всё", callback_data="clearclasses")])
+    rows.append([InlineKeyboardButton("← Назад в меню", callback_data="nav:home")])
     return InlineKeyboardMarkup(rows)
 
 # ─────────────────────────────────────────────
@@ -251,28 +277,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _user_registered(context, user_id):
         _set_user_classes(context, user_id, set())
     await update.message.reply_text(
-        f"👋 Привет, *{name}*!\n\n"
-        "🏋️ *Фитнес-Расписание*\n\n"
-        "Используйте кнопки внизу экрана:\n"
-        "• *Сегодня* / день недели — расписание на день\n"
-        "• *Вся неделя* — полное недельное расписание\n"
-        "• *Мои занятия* — только ваши классы\n"
-        "• *⚙️ Мои классы* — выбрать / изменить классы",
+        _home_text(name),
         parse_mode="Markdown",
-        reply_markup=MAIN_MENU,
+        reply_markup=_main_menu_kb(),
     )
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "🤖 *Помощь*\n\n"
-        "Всё управление через кнопки внизу экрана.\n\n"
+        "Всё управление через кнопки под сообщением.\n\n"
         "📅 Сегодня — расписание на сегодня\n"
         "🗓 Вся неделя — все дни сразу\n"
         "Пн / Вт / Ср / Чт / Пт / Сб — конкретный день\n"
         "🏅 Мои занятия — ваши выбранные классы\n"
         "⚙️ Мои классы — изменить выбор классов",
         parse_mode="Markdown",
-        reply_markup=MAIN_MENU,
+        reply_markup=_main_menu_kb(),
     )
 
 # ─────────────────────────────────────────────
@@ -280,55 +300,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ─────────────────────────────────────────────
 
 async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = update.message.text
-    user_id = update.effective_user.id
-    chosen = _get_user_classes(context, user_id)
-    filter_set = chosen if chosen else None
-
-    if text == BTN_TODAY:
-        day = _today_day()
-        await update.message.reply_text(
-            _day_text(day, filter_set), parse_mode="Markdown", reply_markup=MAIN_MENU
-        )
-        return
-
-    if text == BTN_WEEK:
-        week = _week_text(filter_set)
-        if len(week) <= 4000:
-            await update.message.reply_text(week, parse_mode="Markdown", reply_markup=MAIN_MENU)
-        else:
-            for day_idx in ACTIVE_DAYS:
-                chunk = _day_text(day_idx, filter_set)
-                await update.message.reply_text(chunk, parse_mode="Markdown")
-            await update.message.reply_text("☝️ Вся неделя выше.", reply_markup=MAIN_MENU)
-        return
-
-    if text in BTN_TO_DAY:
-        day = BTN_TO_DAY[text]
-        await update.message.reply_text(
-            _day_text(day, filter_set), parse_mode="Markdown", reply_markup=MAIN_MENU
-        )
-        return
-
-    if text == BTN_MYCLASSES:
-        await update.message.reply_text(
-            _my_classes_text(chosen), parse_mode="Markdown", reply_markup=MAIN_MENU
-        )
-        return
-
-    if text == BTN_EDIT:
-        context.user_data["draft_classes"] = set(chosen)
-        await update.message.reply_text(
-            "⚙️ *Выберите свои занятия*\n\n"
-            "Нажмите на класс чтобы добавить ✅ или убрать ◻️\n"
-            "Затем нажмите *Сохранить*:",
-            parse_mode="Markdown",
-            reply_markup=_class_picker_kb(set(chosen)),
-        )
-        return
-
     await update.message.reply_text(
-        "Используйте кнопки меню внизу экрана 👇", reply_markup=MAIN_MENU
+        "Используйте кнопки под этим сообщением 👇",
+        reply_markup=_main_menu_kb(),
     )
 
 # ─────────────────────────────────────────────
@@ -340,6 +314,35 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     data = query.data or ""
     user_id = query.from_user.id
+
+    if data.startswith("nav:"):
+        view = data[len("nav:"):]
+        if not _user_registered(context, user_id):
+            _set_user_classes(context, user_id, set())
+
+        if view == "home":
+            name = query.from_user.first_name or "друг"
+            await _edit_screen(query, _home_text(name), _main_menu_kb())
+            return
+
+        if view == "edit":
+            chosen = _get_user_classes(context, user_id)
+            context.user_data["draft_classes"] = set(chosen)
+            await _edit_screen(
+                query,
+                "⚙️ *Выберите свои занятия*\n\n"
+                "Нажмите на класс чтобы добавить ✅ или убрать ◻️\n"
+                "Затем нажмите *Сохранить*:",
+                _class_picker_kb(set(chosen)),
+            )
+            return
+
+        text = _view_text(view, context, user_id)
+        if len(text) > 4000:
+            await query.answer("Слишком длинное сообщение для Telegram.", show_alert=True)
+            return
+        await _edit_screen(query, text, _main_menu_kb())
+        return
 
     if data.startswith("toggle:"):
         title = data[len("toggle:"):]
@@ -377,12 +380,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             msg = f"✅ *Сохранено!*\n\nВаши занятия:\n{names}"
         else:
             msg = "✅ Фильтр сброшен — будет показываться полное расписание."
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=msg,
-            parse_mode="Markdown",
-            reply_markup=MAIN_MENU,
-        )
+        await _edit_screen(query, msg, _main_menu_kb())
         return
 
     await query.answer("⚠️ Неизвестное действие.", show_alert=True)
