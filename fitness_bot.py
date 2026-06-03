@@ -563,7 +563,7 @@ if __name__ == "__main__":
     {"id": 21, "day": 6, "title": "Лимфодренаж",    "description": "",            "timeRange": ["07:30", "08:30"]},
     {"id": 22, "day": 6, "title": "ХатхаЙога",      "description": "Наталья",    "timeRange": ["09:00", "10:00"]},
     {"id": 23, "day": 6, "title": "Суставная Йога",  "description": "Наталья",    "timeRange": ["10:00", "11:00"]},
-]
+
 
 SCHEDULE_DATA: dict[int, list[dict]] = {}
 for _e in _RAW_EVENTS:
