@@ -141,6 +141,7 @@ def _main_menu_kb() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("📝 Записаться", callback_data="nav:signup"),
+            InlineKeyboardButton("📌 Мои занятия", callback_data="nav:mybookings"),
         ],
     ])
 
@@ -207,6 +208,11 @@ def _format_event(ev: dict) -> str:
     instr = f" │ 👤 *{instructor}*" if instructor else ""
     return f"{emoji} 🕒 *{s}–{e}* │ *{ev['title']}*{instr} │ ⏱ _{dur}_"
 
+def _clip(text: str, width: int) -> str:
+    if len(text) <= width:
+        return text.ljust(width)
+    return text[:max(0, width - 1)] + "…"
+
 def _day_text(day_index: int, filter_titles: set = None) -> str:
     name = DAY_NAMES.get(day_index, f"День {day_index}")
     events = SCHEDULE_DATA.get(day_index, [])
@@ -220,19 +226,34 @@ def _day_text(day_index: int, filter_titles: set = None) -> str:
     return "\n".join(lines)
 
 def _week_text(filter_titles: set = None) -> str:
-    sections = []
+    rows = []
     for day_idx in ACTIVE_DAYS:
         events = SCHEDULE_DATA.get(day_idx, [])
         if filter_titles is not None:
             events = [e for e in events if e["title"] in filter_titles]
-        if not events:
-            continue
-        lines = [f"📅 *{DAY_NAMES[day_idx]}*"]
-        lines += [_format_event(ev) for ev in events]
-        sections.append("\n".join(lines))
-    if not sections:
+        for ev in events:
+            s, e = ev["timeRange"]
+            rows.append([
+                DAY_SHORT[day_idx],
+                f"{s}-{e}",
+                ev["title"],
+                ev.get("description", "").strip() or "-",
+            ])
+    if not rows:
         return "🗓 *Вся неделя*\n\n_Занятий не найдено._"
-    return "🗓 *Вся неделя*\n\n" + "\n\n".join(sections)
+
+    lines = [
+        "День Время       Занятие          Тренер",
+        "---- ----------- ---------------- -------",
+    ]
+    for day, time_range, title, instructor in rows:
+        lines.append(
+            f"{_clip(day, 4)} "
+            f"{_clip(time_range, 11)} "
+            f"{_clip(title, 16)} "
+            f"{_clip(instructor, 7)}"
+        )
+    return "🗓 *Вся неделя*\n\n```" + "\n".join(lines) + "```"
 
 def _event_choice_text(ev: dict) -> str:
     s, e = ev["timeRange"]
@@ -254,6 +275,37 @@ def _signup_classes_text() -> str:
 
 def _signup_times_text(title: str) -> str:
     return f"📝 *{title}*\n\nВыберите день и время:"
+
+def _user_bookings(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> list[dict]:
+    bookings = context.bot_data.setdefault("bookings", [])
+    user_bookings = [b for b in bookings if b.get("user_id") == user_id]
+    user_bookings.sort(key=lambda b: (b.get("day", 99), b.get("time", ""), b.get("created_at", "")))
+    return user_bookings
+
+def _my_bookings_text(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    bookings = _user_bookings(context, user_id)
+    if not bookings:
+        return (
+            "📌 *Мои занятия*\n\n"
+            "_Вы пока никуда не записаны._\n\n"
+            "Нажмите *Записаться*, чтобы выбрать занятие, день и время."
+        )
+
+    lines = ["📌 *Мои занятия*\n"]
+    for idx, booking in enumerate(bookings, start=1):
+        day = DAY_NAMES.get(booking.get("day"), "День не указан")
+        class_title = booking.get("class_title", "Занятие")
+        time_range = booking.get("time", "время не указано")
+        ev = EVENT_BY_ID.get(booking.get("event_id"))
+        instructor = ev.get("description", "").strip() if ev else ""
+        instructor_line = f"\n   👤 {instructor}" if instructor else ""
+        lines.append(
+            f"{idx}. {_emoji_for_class(class_title)} *{class_title}*\n"
+            f"   📅 {day}\n"
+            f"   🕒 {time_range}"
+            f"{instructor_line}"
+        )
+    return "\n\n".join(lines)
 
 def _signup_classes_kb() -> InlineKeyboardMarkup:
     rows = []
@@ -284,6 +336,13 @@ def _confirm_booking_kb(event_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Подтвердить запись", callback_data=f"signup:confirm:{event_id}")],
         [InlineKeyboardButton("← Выбрать другое время", callback_data=f"signup:class:{class_id}")],
+        [InlineKeyboardButton("← Назад в меню", callback_data="nav:home")],
+    ])
+
+def _after_booking_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📌 Мои занятия", callback_data="nav:mybookings")],
+        [InlineKeyboardButton("📝 Записаться ещё", callback_data="nav:signup")],
         [InlineKeyboardButton("← Назад в меню", callback_data="nav:home")],
     ])
 
@@ -321,6 +380,8 @@ def _view_text(view: str, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> s
         return _week_text()
     if view.startswith("day:"):
         return _day_text(int(view.split(":", 1)[1]))
+    if view == "mybookings":
+        return _my_bookings_text(context, user_id)
     return _home_text()
 
 async def _edit_screen(query, text: str, reply_markup: InlineKeyboardMarkup) -> None:
@@ -372,7 +433,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "📅 Сегодня — расписание на сегодня\n"
         "🗓 Вся неделя — все дни сразу\n"
         "Пн / Вт / Ср / Чт / Пт / Сб — конкретный день\n"
-        "📝 Записаться — выбрать занятие, день и время",
+        "📝 Записаться — выбрать занятие, день и время\n"
+        "📌 Мои занятия — ваши записи",
         parse_mode="Markdown",
         reply_markup=_main_menu_kb(),
     )
@@ -464,7 +526,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _edit_screen(
             query,
             "✅ *Вы записаны!*\n\n" + _booking_text(ev).replace("📝 *Запись на занятие*\n\n", "") + notify_line,
-            _main_menu_kb(),
+            _after_booking_kb(),
         )
         return
 
