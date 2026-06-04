@@ -21,6 +21,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+from telegram.error import TelegramError
 
 # ─────────────────────────────────────────────
 # ТОКЕН — вставьте свой токен от @BotFather
@@ -377,11 +378,14 @@ def _view_text(view: str, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> s
         return _my_bookings_text(context, user_id)
     return _home_text()
 
+def _plain(text: str) -> str:
+    return text.replace("*", "").replace("_", "")
+
 async def _edit_screen(query, text: str, reply_markup: InlineKeyboardMarkup) -> None:
+    text = _plain(text)
     try:
         await query.edit_message_text(
             text,
-            parse_mode="Markdown",
             reply_markup=reply_markup,
         )
     except Exception as exc:
@@ -391,7 +395,6 @@ async def _edit_screen(query, text: str, reply_markup: InlineKeyboardMarkup) -> 
             await query.message.delete()
             await query.message.chat.send_message(
                 text=text,
-                parse_mode="Markdown",
                 reply_markup=reply_markup,
             )
         except Exception:
@@ -427,10 +430,17 @@ async def _show_week_image(query) -> None:
     except Exception as exc:
         logger.warning("Не удалось удалить старое сообщение: %s", exc)
 
-    with photo:
-        await query.message.chat.send_photo(
-            photo=photo,
-            caption="🗓 Вся неделя",
+    try:
+        with photo:
+            await query.message.chat.send_photo(
+                photo=photo,
+                caption="🗓 Вся неделя",
+                reply_markup=_main_menu_kb(),
+            )
+    except TelegramError as exc:
+        logger.exception("Не удалось отправить картинку расписания: %s", exc)
+        await query.message.chat.send_message(
+            text="🗓 Вся неделя\n\nКартинка расписания временно не отправилась. Попробуйте нажать ещё раз.",
             reply_markup=_main_menu_kb(),
         )
 
@@ -472,10 +482,20 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         _ensure_user(context, user_id)
     await _remove_old_reply_keyboard(update)
     await update.message.reply_text(
-        _home_text(name),
-        parse_mode="Markdown",
+        _plain(_home_text(name)),
         reply_markup=_main_menu_kb(),
     )
+
+async def handle_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.exception("Ошибка обработчика Telegram", exc_info=context.error)
+    if isinstance(update, Update) and update.callback_query:
+        try:
+            await update.callback_query.answer(
+                "Произошла ошибка. Нажмите /start и попробуйте ещё раз.",
+                show_alert=True,
+            )
+        except Exception as exc:
+            logger.warning("Не удалось показать ошибку пользователю: %s", exc)
 
 # ─────────────────────────────────────────────
 # Callback — навигация и запись на занятия
@@ -592,9 +612,10 @@ def main() -> None:
     app.bot_data["bookings"] = _load_bookings()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_error_handler(handle_error)
 
     logger.info("Бот запущен… Ctrl-C для остановки.")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=["message", "callback_query"], drop_pending_updates=True)
 
 
 if __name__ == "__main__":
