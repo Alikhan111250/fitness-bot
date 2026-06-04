@@ -11,6 +11,7 @@ from io import BytesIO
 from datetime import datetime
 from telegram import (
     Update,
+    InputMediaPhoto,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -60,7 +61,7 @@ _RAW_EVENTS = [
     # Понедельник
     {"id": 1,  "day": 0, "title": "Кинезиофитнес", "description": "Любовь",      "timeRange": ["08:30", "09:30"]},
     {"id": 2,  "day": 0, "title": "ЭроТреверс",    "description": "Айгерим",     "timeRange": ["10:00", "11:30"]},
-    {"id": 3,  "day": 0, "title": "ЭроТревис",     "description": "Айгерим",     "timeRange": ["18:30", "20:00"]},
+    {"id": 3,  "day": 0, "title": "ЭроТреверс",    "description": "Айгерим",     "timeRange": ["18:30", "20:00"]},
     # Вторник
     {"id": 4,  "day": 1, "title": "Шейпинг",        "description": "Наталья",     "timeRange": ["07:30", "08:30"]},
     {"id": 5,  "day": 1, "title": "Зумба",          "description": "Аннастасия",  "timeRange": ["08:30", "09:30"]},
@@ -69,7 +70,7 @@ _RAW_EVENTS = [
     {"id": 7,  "day": 1, "title": "Шейпинг",        "description": "Наталья",     "timeRange": ["19:00", "20:00"]},
     # Среда
     {"id": 9,  "day": 2, "title": "Кинезиофитнес", "description": "Любовь",      "timeRange": ["08:00", "09:00"]},
-    {"id": 10, "day": 2, "title": "ЭроТревис",     "description": "Айгерим",     "timeRange": ["18:30", "20:00"]},
+    {"id": 10, "day": 2, "title": "ЭроТреверс",    "description": "Айгерим",     "timeRange": ["18:30", "20:00"]},
     # Четверг
     {"id": 11, "day": 3, "title": "Шейпинг",       "description": "Наталья",     "timeRange": ["07:30", "08:30"]},
     {"id": 13, "day": 3, "title": "Шейпинг",       "description": "Наталья",     "timeRange": ["18:00", "19:00"]},
@@ -426,23 +427,33 @@ async def _show_week_image(query) -> None:
         return
 
     try:
-        await query.message.delete()
-    except Exception as exc:
-        logger.warning("Не удалось удалить старое сообщение: %s", exc)
-
-    try:
         with photo:
-            await query.message.chat.send_photo(
-                photo=photo,
-                caption="🗓 Вся неделя",
+            await query.edit_message_media(
+                media=InputMediaPhoto(media=photo, caption="🗓 Вся неделя"),
                 reply_markup=_main_menu_kb(),
             )
     except TelegramError as exc:
-        logger.exception("Не удалось отправить картинку расписания: %s", exc)
-        await query.message.chat.send_message(
-            text="🗓 Вся неделя\n\nКартинка расписания временно не отправилась. Попробуйте нажать ещё раз.",
-            reply_markup=_main_menu_kb(),
-        )
+        logger.warning("Не удалось заменить сообщение картинкой: %s", exc)
+        photo = _schedule_photo()
+        if photo is None:
+            await query.message.chat.send_message(
+                text="🗓 Вся неделя\n\nКартинка расписания не найдена.",
+                reply_markup=_main_menu_kb(),
+            )
+            return
+        try:
+            with photo:
+                await query.message.chat.send_photo(
+                    photo=photo,
+                    caption="🗓 Вся неделя",
+                    reply_markup=_main_menu_kb(),
+                )
+        except TelegramError as send_exc:
+            logger.exception("Не удалось отправить картинку расписания: %s", send_exc)
+            await query.message.chat.send_message(
+                text="🗓 Вся неделя\n\nКартинка расписания временно не отправилась. Попробуйте нажать ещё раз.",
+                reply_markup=_main_menu_kb(),
+            )
 
 async def _notify_booking(context: ContextTypes.DEFAULT_TYPE, user, ev: dict) -> int:
     recipients = set(NOTIFY_CHAT_IDS)
