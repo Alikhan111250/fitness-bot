@@ -5,7 +5,9 @@
 
 import os
 import json
+import base64
 import logging
+from io import BytesIO
 from datetime import datetime
 from telegram import (
     Update,
@@ -25,6 +27,8 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8607739583:AAGIWYXZBdJFW0Uil__NTIwmDL9e2lbd8Zc")
 BOOKINGS_FILE = os.environ.get("BOOKINGS_FILE", "bookings.json")
+SCHEDULE_IMAGE_FILE = os.environ.get("SCHEDULE_IMAGE_FILE", "schedule.jpg")
+SCHEDULE_IMAGE_BASE64_FILE = os.environ.get("SCHEDULE_IMAGE_BASE64_FILE", "schedule_image.b64")
 NOTIFY_CHAT_IDS = [
     int(chat_id.strip())
     for chat_id in os.environ.get("NOTIFY_CHAT_IDS", "").split(",")
@@ -49,39 +53,33 @@ logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
 # Данные расписания
-# день: 0=Вс, 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб
+# день: 0=Пн, 1=Вт, 2=Ср, 3=Чт, 4=Пт, 5=Сб
 # ─────────────────────────────────────────────
 _RAW_EVENTS = [
-    # Воскресенье
-    {"id": 1,  "day": 0, "title": "Кинезиофитнес", "description": "Любовь",     "timeRange": ["08:30", "09:30"]},
-    {"id": 2,  "day": 0, "title": "ЭроТреверс",    "description": "Айгерим",    "timeRange": ["10:00", "11:30"]},
-    {"id": 3,  "day": 0, "title": "ЭроТревис",     "description": "Айгерим",    "timeRange": ["18:30", "20:00"]},
     # Понедельник
-    {"id": 4,  "day": 1, "title": "Кинезиофитнес", "description": "Любовь",     "timeRange": ["08:30", "09:30"]},
-    {"id": 5,  "day": 1, "title": "ЭроТреверс",    "description": "Айгерим",    "timeRange": ["10:00", "11:30"]},
-    {"id": 6,  "day": 1, "title": "ЭроТревис",     "description": "Айгерим",    "timeRange": ["18:30", "20:00"]},
+    {"id": 1,  "day": 0, "title": "Кинезиофитнес", "description": "Любовь",      "timeRange": ["08:30", "09:30"]},
+    {"id": 2,  "day": 0, "title": "ЭроТреверс",    "description": "Айгерим",     "timeRange": ["10:00", "11:30"]},
+    {"id": 3,  "day": 0, "title": "ЭроТревис",     "description": "Айгерим",     "timeRange": ["18:30", "20:00"]},
     # Вторник
-    {"id": 7,  "day": 2, "title": "Шейпинг",        "description": "Наталья",    "timeRange": ["07:30", "08:30"]},
-    {"id": 8,  "day": 2, "title": "Зумба",           "description": "Аннастасия","timeRange": ["08:30", "09:30"]},
-    {"id": 9,  "day": 2, "title": "Суставная Йога",  "description": "Наталья",    "timeRange": ["17:00", "18:00"]},
-    {"id": 10, "day": 2, "title": "Шейпинг",        "description": "Наталья",    "timeRange": ["18:00", "19:00"]},
-    {"id": 11, "day": 2, "title": "Шейпинг",        "description": "Наталья",    "timeRange": ["19:00", "20:00"]},
+    {"id": 4,  "day": 1, "title": "Шейпинг",        "description": "Наталья",     "timeRange": ["07:30", "08:30"]},
+    {"id": 5,  "day": 1, "title": "Зумба",          "description": "Аннастасия",  "timeRange": ["08:30", "09:30"]},
+    {"id": 6,  "day": 1, "title": "Суставная Йога", "description": "Наталья",     "timeRange": ["17:00", "18:00"]},
+    {"id": 12, "day": 1, "title": "Шейпинг",        "description": "Наталья",     "timeRange": ["18:00", "19:00"]},
+    {"id": 7,  "day": 1, "title": "Шейпинг",        "description": "Наталья",     "timeRange": ["19:00", "20:00"]},
     # Среда
-    {"id": 12, "day": 3, "title": "Кинезиофитнес",  "description": "Любовь",     "timeRange": ["08:00", "09:00"]},
-    {"id": 13, "day": 3, "title": "ЭроТревис",      "description": "Айгерим",    "timeRange": ["18:30", "20:00"]},
+    {"id": 9,  "day": 2, "title": "Кинезиофитнес", "description": "Любовь",      "timeRange": ["08:00", "09:00"]},
+    {"id": 10, "day": 2, "title": "ЭроТревис",     "description": "Айгерим",     "timeRange": ["18:30", "20:00"]},
     # Четверг
-    {"id": 14, "day": 4, "title": "Шейпинг",        "description": "Наталья",    "timeRange": ["07:30", "08:30"]},
-    {"id": 15, "day": 4, "title": "Кинезиофитнес",  "description": "Любовь",     "timeRange": ["08:30", "09:30"]},
-    {"id": 16, "day": 4, "title": "ЭроТреверс",     "description": "Айгерим",    "timeRange": ["10:00", "11:30"]},
-    {"id": 17, "day": 4, "title": "Шейпинг",        "description": "Наталья",    "timeRange": ["18:00", "19:00"]},
-    {"id": 18, "day": 4, "title": "Шейпинг",        "description": "Наталья",    "timeRange": ["19:00", "20:00"]},
+    {"id": 11, "day": 3, "title": "Шейпинг",       "description": "Наталья",     "timeRange": ["07:30", "08:30"]},
+    {"id": 13, "day": 3, "title": "Шейпинг",       "description": "Наталья",     "timeRange": ["18:00", "19:00"]},
+    {"id": 14, "day": 3, "title": "Шейпинг",       "description": "Наталья",     "timeRange": ["19:00", "20:00"]},
     # Пятница
-    {"id": 19, "day": 5, "title": "Кинезиофитнес",  "description": "Любовь",     "timeRange": ["08:30", "09:30"]},
-    {"id": 20, "day": 5, "title": "ЭроТреверс",     "description": "Айгерим",    "timeRange": ["10:00", "11:30"]},
+    {"id": 15, "day": 4, "title": "Кинезиофитнес", "description": "Любовь",      "timeRange": ["08:30", "09:30"]},
+    {"id": 16, "day": 4, "title": "ЭроТреверс",    "description": "Айгерим",     "timeRange": ["10:00", "11:30"]},
     # Суббота
-    {"id": 21, "day": 6, "title": "Лимфодренаж",    "description": "",            "timeRange": ["07:30", "08:30"]},
-    {"id": 22, "day": 6, "title": "ХатхаЙога",      "description": "Наталья",    "timeRange": ["09:00", "10:00"]},
-    {"id": 23, "day": 6, "title": "Суставная Йога",  "description": "Наталья",    "timeRange": ["10:00", "11:00"]},
+    {"id": 17, "day": 5, "title": "Лимфодренаж",   "description": "",            "timeRange": ["07:30", "08:30"]},
+    {"id": 18, "day": 5, "title": "ХатхаЙога",     "description": "Наталья",     "timeRange": ["09:00", "10:00"]},
+    {"id": 19, "day": 5, "title": "Суставная Йога", "description": "Наталья",    "timeRange": ["10:00", "11:00"]},
 ]
 
 SCHEDULE_DATA: dict[int, list[dict]] = {}
@@ -102,21 +100,21 @@ TITLE_TO_CLASS_ID: dict[str, int] = {
 # ─────────────────────────────────────────────
 # Дни недели
 # Python weekday(): 0=Пн … 6=Вс
-# Наш schedule day:  0=Вс, 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб
+# Наш schedule day:  0=Пн, 1=Вт, 2=Ср, 3=Чт, 4=Пт, 5=Сб
 # ─────────────────────────────────────────────
-_PYTHON_TO_SCHEDULE = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 0}
+_PYTHON_TO_SCHEDULE = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6}
 
 DAY_NAMES = {
-    0: "Воскресенье",
-    1: "Понедельник",
-    2: "Вторник",
-    3: "Среда",
-    4: "Четверг",
-    5: "Пятница",
-    6: "Суббота",
+    0: "Понедельник",
+    1: "Вторник",
+    2: "Среда",
+    3: "Четверг",
+    4: "Пятница",
+    5: "Суббота",
+    6: "Воскресенье",
 }
-DAY_SHORT = {0: "Вс", 1: "Пн", 2: "Вт", 3: "Ср", 4: "Чт", 5: "Пт", 6: "Сб"}
-ACTIVE_DAYS = sorted(SCHEDULE_DATA.keys())  # [0,1,2,3,4,5,6]
+DAY_SHORT = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
+ACTIVE_DAYS = sorted(SCHEDULE_DATA.keys())  # [0,1,2,3,4,5]
 
 # ── Inline-кнопки меню ──
 def _main_menu_kb() -> InlineKeyboardMarkup:
@@ -126,14 +124,14 @@ def _main_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗓 Вся неделя", callback_data="nav:week"),
         ],
         [
-            InlineKeyboardButton("Пн", callback_data="nav:day:1"),
-            InlineKeyboardButton("Вт", callback_data="nav:day:2"),
-            InlineKeyboardButton("Ср", callback_data="nav:day:3"),
+            InlineKeyboardButton("Пн", callback_data="nav:day:0"),
+            InlineKeyboardButton("Вт", callback_data="nav:day:1"),
+            InlineKeyboardButton("Ср", callback_data="nav:day:2"),
         ],
         [
-            InlineKeyboardButton("Чт", callback_data="nav:day:4"),
-            InlineKeyboardButton("Пт", callback_data="nav:day:5"),
-            InlineKeyboardButton("Сб", callback_data="nav:day:6"),
+            InlineKeyboardButton("Чт", callback_data="nav:day:3"),
+            InlineKeyboardButton("Пт", callback_data="nav:day:4"),
+            InlineKeyboardButton("Сб", callback_data="nav:day:5"),
         ],
         [
             InlineKeyboardButton("📝 Записаться", callback_data="nav:signup"),
@@ -175,6 +173,28 @@ def _save_bookings(bookings: list[dict]) -> None:
     except OSError as exc:
         logger.warning("Не удалось сохранить записи: %s", exc)
 
+def _delete_booking(context, user_id: int, booking_index: int):
+    user_bookings = _user_bookings(context, user_id)
+    if booking_index < 0 or booking_index >= len(user_bookings):
+        return None
+
+    removed = user_bookings[booking_index]
+    bookings = context.bot_data.setdefault("bookings", [])
+    try:
+        bookings.remove(removed)
+    except ValueError:
+        return None
+
+    user_data = context.bot_data.setdefault("users", {}).setdefault(user_id, {})
+    if "bookings" in user_data:
+        try:
+            user_data["bookings"].remove(removed)
+        except ValueError:
+            pass
+
+    _save_bookings(bookings)
+    return removed
+
 # ─────────────────────────────────────────────
 # Форматирование
 # ─────────────────────────────────────────────
@@ -204,11 +224,6 @@ def _format_event(ev: dict) -> str:
     instr = f" │ 👤 *{instructor}*" if instructor else ""
     return f"{emoji} 🕒 *{s}–{e}* │ *{ev['title']}*{instr} │ ⏱ _{dur}_"
 
-def _clip(text: str, width: int) -> str:
-    if len(text) <= width:
-        return text.ljust(width)
-    return text[:max(0, width - 1)] + "…"
-
 def _day_text(day_index: int, filter_titles: set = None) -> str:
     name = DAY_NAMES.get(day_index, f"День {day_index}")
     events = SCHEDULE_DATA.get(day_index, [])
@@ -220,33 +235,6 @@ def _day_text(day_index: int, filter_titles: set = None) -> str:
     lines = [f"📅 *{name}*\n"]
     lines += [_format_event(ev) for ev in events]
     return "\n".join(lines)
-
-def _week_text(filter_titles: set = None) -> str:
-    sections = []
-    for day_idx in ACTIVE_DAYS:
-        events = SCHEDULE_DATA.get(day_idx, [])
-        if filter_titles is not None:
-            events = [e for e in events if e["title"] in filter_titles]
-        if not events:
-            continue
-
-        lines = [f"*{DAY_NAMES[day_idx]}*"]
-        lines.append("┌─────────────┬────────────────────┐")
-        lines.append("│ Время       │ Занятие            │")
-        lines.append("├─────────────┼────────────────────┤")
-        for ev in events:
-            s, e = ev["timeRange"]
-            title = f"{_emoji_for_class(ev['title'])} {ev['title']}"
-            instructor = ev.get("description", "").strip()
-            if instructor:
-                title = f"{title}, {instructor}"
-            lines.append(f"│ {_clip(f'{s}-{e}', 11)} │ {_clip(title, 18)} │")
-        lines.append("└─────────────┴────────────────────┘")
-        sections.append("\n".join(lines))
-
-    if not sections:
-        return "🗓 *Вся неделя*\n\n_Занятий не найдено._"
-    return "🗓 *Вся неделя*\n\n" + "\n\n".join(sections)
 
 def _event_choice_text(ev: dict) -> str:
     s, e = ev["timeRange"]
@@ -299,6 +287,20 @@ def _my_bookings_text(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
             f"{instructor_line}"
         )
     return "\n\n".join(lines)
+
+def _my_bookings_kb(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> InlineKeyboardMarkup:
+    rows = []
+    for idx, booking in enumerate(_user_bookings(context, user_id), start=1):
+        class_title = booking.get("class_title", "Занятие")
+        day = DAY_SHORT.get(booking.get("day"), "")
+        time_range = booking.get("time", "")
+        rows.append([InlineKeyboardButton(
+            f"❌ Удалить {idx}: {day} {time_range} {class_title}",
+            callback_data=f"booking:remove:{idx - 1}",
+        )])
+    rows.append([InlineKeyboardButton("📝 Записаться ещё", callback_data="nav:signup")])
+    rows.append([InlineKeyboardButton("← Назад в меню", callback_data="nav:home")])
+    return InlineKeyboardMarkup(rows)
 
 def _signup_classes_kb() -> InlineKeyboardMarkup:
     rows = []
@@ -369,8 +371,6 @@ def _home_text(name: str = "друг") -> str:
 def _view_text(view: str, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
     if view == "today":
         return _day_text(_today_day())
-    if view == "week":
-        return _week_text()
     if view.startswith("day:"):
         return _day_text(int(view.split(":", 1)[1]))
     if view == "mybookings":
@@ -385,8 +385,54 @@ async def _edit_screen(query, text: str, reply_markup: InlineKeyboardMarkup) -> 
             reply_markup=reply_markup,
         )
     except Exception as exc:
-        if "Message is not modified" not in str(exc):
-            raise
+        if "Message is not modified" in str(exc):
+            return
+        try:
+            await query.message.delete()
+            await query.message.chat.send_message(
+                text=text,
+                parse_mode="Markdown",
+                reply_markup=reply_markup,
+            )
+        except Exception:
+            raise exc
+
+def _schedule_photo():
+    if os.path.exists(SCHEDULE_IMAGE_FILE):
+        return open(SCHEDULE_IMAGE_FILE, "rb")
+    if not os.path.exists(SCHEDULE_IMAGE_BASE64_FILE):
+        return None
+    try:
+        with open(SCHEDULE_IMAGE_BASE64_FILE, "r", encoding="ascii") as image_file:
+            image_data = base64.b64decode(image_file.read())
+    except (OSError, ValueError) as exc:
+        logger.warning("Не удалось загрузить картинку расписания: %s", exc)
+        return None
+    photo = BytesIO(image_data)
+    photo.name = SCHEDULE_IMAGE_FILE
+    return photo
+
+async def _show_week_image(query) -> None:
+    photo = _schedule_photo()
+    if photo is None:
+        await _edit_screen(
+            query,
+            "🗓 *Вся неделя*\n\n_Картинка расписания не найдена._",
+            _main_menu_kb(),
+        )
+        return
+
+    try:
+        await query.message.delete()
+    except Exception as exc:
+        logger.warning("Не удалось удалить старое сообщение: %s", exc)
+
+    with photo:
+        await query.message.chat.send_photo(
+            photo=photo,
+            caption="🗓 Вся неделя",
+            reply_markup=_main_menu_kb(),
+        )
 
 async def _notify_booking(context: ContextTypes.DEFAULT_TYPE, user, ev: dict) -> int:
     recipients = set(NOTIFY_CHAT_IDS)
@@ -455,6 +501,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await _edit_screen(query, _signup_classes_text(), _signup_classes_kb())
             return
 
+        if view == "week":
+            await _show_week_image(query)
+            return
+
+        if view == "mybookings":
+            await _edit_screen(
+                query,
+                _my_bookings_text(context, user_id),
+                _my_bookings_kb(context, user_id),
+            )
+            return
+
         text = _view_text(view, context, user_id)
         if len(text) > 4000:
             await query.answer("Слишком длинное сообщение для Telegram.", show_alert=True)
@@ -505,6 +563,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             _after_booking_kb(),
         )
         await _notify_booking(context, query.from_user, ev)
+        return
+
+    if data.startswith("booking:remove:"):
+        booking_index = int(data[len("booking:remove:"):])
+        removed = _delete_booking(context, user_id, booking_index)
+        if not removed:
+            await query.answer("Запись не найдена.", show_alert=True)
+            return
+        await _edit_screen(
+            query,
+            "✅ *Запись удалена.*\n\n" + _my_bookings_text(context, user_id),
+            _my_bookings_kb(context, user_id),
+        )
         return
 
     await query.answer("⚠️ Неизвестное действие.", show_alert=True)
